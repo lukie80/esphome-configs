@@ -1,0 +1,148 @@
+### cannot be implemented in esphome
+
+esphome:
+  name: "schreibtischlicht"
+
+esp32:
+    board: esp32doit-devkit-v1
+
+wifi:
+  networks:
+  - ssid: '...'
+    password: '...'
+    
+logger:
+
+api:
+
+ota:
+  platform: esphome
+
+status_led:
+  pin:
+    number: GPIO2 # D4 for D1mini board
+    inverted: false
+
+light:
+  - platform: color_temperature
+    name: "Schreibtischlicht"
+    color_temperature: output_ct # mapped range is 0...1
+    gamma_correct: 2.8
+    brightness: output_brt # mapped range is 0...1 with gamma of 2.8
+    cold_white_color_temperature: 5000 K #maps to 0.0
+    warm_white_color_temperature: 2700 K #maps to 1.0
+    default_transition_length: 0.0s
+    effects:
+      - pulse:
+          name: "Pulse"
+          transition_length: 0.5s
+          update_interval: 0.5s
+          min_brightness: 0%
+          max_brightness: 100%
+
+# template output does not have a .state attribute,
+# thus globals are needed to save the state instead
+# to be accessible for color temperature split calculations
+globals:
+   - id: output_ct_g #color temp
+     type: float
+     restore_value: no
+     initial_value: "0.0"
+   - id: output_brt_g #brightness
+     type: float
+     restore_value: no
+     initial_value: "0.0"
+
+output:
+  - platform: ledc # cold white channel 5000 K
+    pin: GPIO14
+    id: pwm_cw
+    frequency: 8000 Hz #8k OK
+    channel: 0
+  - platform: ledc # mid white channel 3500 K
+    pin: GPIO12
+    id: pwm_mw
+    frequency: 8000 Hz
+    channel: 2
+  - platform: ledc # warm white channel 2700 K
+    pin: GPIO13
+    id: pwm_ww
+    frequency: 8000 Hz
+    channel: 4
+  - platform: template # color temparature output
+    id: output_ct
+    type: float
+    write_action: # access globals, derive new values and set pwm outputs
+      - globals.set: # update global from self
+          id: output_ct_g
+          value: !lambda 'return state;'
+      - output.set_level:
+          id: pwm_ww
+          level: !lambda  |-            
+            float x = (+2*id(output_ct_g)-1)*id(output_brt_g);
+            if (x<0.0){x=0.0;}
+            if (x>1.0){x=1.0;}
+            x = powf(x,2.0);
+            return x;
+      - output.set_level:
+          id: pwm_mw
+          level: !lambda  |-
+            float x;
+            if (id(output_ct_g)<0.50){
+                x = (+2*id(output_ct_g))*id(output_brt_g);                
+            }else{
+                x = (-2*id(output_ct_g)+2)*id(output_brt_g);
+            }
+            if (x<0.0){x=0.0;}
+            if (x>1.0){x=1.0;}
+            x = powf(x,2.0);
+            return x;
+      - output.set_level:
+          id: pwm_cw
+          level: !lambda  |-
+            float x =(-2*id(output_ct_g)+1)*id(output_brt_g);
+            if (x<0.0){x=0.0;}
+            if (x>1.0){x=1.0;}
+            x = powf(x,2.0);
+            return x;
+  - platform: template # brightness output
+    id: output_brt
+    type: float
+    min_power: 1.5%
+    zero_means_zero: True
+    write_action:
+      - globals.set:
+          id: output_brt_g
+          value: !lambda 'return powf(state,1/2.8);'
+      #- logger.log:
+      #    format: "CT %.3f, B %.3f"
+      #    args: [ 'id(output_ct_g)', 'id(output_brt_g)' ]        
+      - output.set_level:
+          id: pwm_ww
+          level: !lambda  |-
+            float x = (+2*id(output_ct_g)-1)*id(output_brt_g);            
+            if (x<0.0){x=0.0;}
+            if (x>1.0){x=1.0;}
+            x = powf(x,2.0);
+            return x;
+      - output.set_level:
+          id: pwm_mw
+          level: !lambda  |-
+            float x;
+            if (id(output_ct_g)<0.50){
+                x = (+2*id(output_ct_g))*id(output_brt_g);
+            }else{
+                x = (-2*id(output_ct_g)+2)*id(output_brt_g);
+            }            
+            if (x<0.0){x=0.0;}
+            if (x>1.0){x=1.0;}
+            x = powf(x,2.0);
+            return x;
+      - output.set_level:
+          id: pwm_cw
+          level: !lambda  |-
+            float x =(-2*id(output_ct_g)+1)*id(output_brt_g);
+            if (x<0.0){x=0.0;}
+            if (x>1.0){x=1.0;}
+            x = powf(x,2.0);
+            return x;
